@@ -98,7 +98,7 @@ function createMediaKeys(media, mime) {
 function captureJson(dv, pos, length) {
   const openBrace = "{".charCodeAt(0);
   const closeBrace = "}".charCodeAt(0);
-  
+
   if (dv.getUint8(pos) != openBrace) {
     return -1;
   }
@@ -145,16 +145,26 @@ function extractBMFFClearKeyID(initData) {
   return initData;
 }
 
+var globalMedia;
+
 function load(index) {
+
+  if (globalMedia) {
+    // Force unload of old media data.
+    // TODO: Close keysession too? Not really needed for ClearKey...
+    globalMedia.src = "";
+    globalMedia = null;
+  }
   e('list').selectedIndex = index;
   e('log_pane').innerHTML = "";
   var src = resources[index].src;
   var mime = resources[index].type;
-  
+
   log("Loading resource " + src);
   var elemType = /^audio/.test(mime) ? "audio" : "video";
   var media = document.createElement(elemType);
-  
+  globalMedia = media;
+
   if (preload_cdm_checkbox.checked) {
     log("Loading CDM before starting resource load.");
     if (!createMediaKeys(media, mime)) {
@@ -173,7 +183,7 @@ function load(index) {
   for (var i = 0; i < events.length; ++i) {
     media.addEventListener(events[i], dumpEvent, false);
   }
-    
+
   function createSession(initDataType, initData) {
     var promise = media.mediaKeys.createSession(initDataType, initData);
     promise.catch(function(ex) { log("ERROR: Unable to create MediaKeySession ex=" + ex); });
@@ -212,9 +222,9 @@ function load(index) {
         keySession.addEventListener("message", onKeyMessage, false);
 
       }
-    ).catch(function(ex) { log("ERROR: Unable to set MediaKeys ex=" + ex); });  
+    ).catch(function(ex) { log("ERROR: Unable to set MediaKeys ex=" + ex); });
   }
-    
+
   media.addEventListener("needkey", function(event) {
     log("EVENT needkey initDataType=" + event.initDataType + " initData= " + Uint8ArrayToStr(event.initData));
     var supported = MediaKeys.isTypeSupported("org.w3.clearkey", mime);
@@ -245,11 +255,11 @@ function load(index) {
     }
   }, false);
 
-  
+
   media.src = src;
   media.controls = true;
   media.autoplay = true;
-  
+
   // Destory existing media elements. This frees up decoder resources.
   var container = document.getElementById('player_container');
   var children = container.childNodes;
