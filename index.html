@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    #log_pane {
+      font-size: small;
+    }
+    video {
+      max-width: 100%;
+    }
+  </style>
+</head>
+<body onload="onPageLoad();">
+<p>Resource:
+<select id="list">
+</select>
+<input id="preload_cdm_checkbox" type="checkbox" name="preload_cdm" value="1">Create CDM before beginning media load.<br>
+</p>
+<div id="player_container"></div>
+<br>
+<div id="log_pane">
+</div>
+
+<script>
+
+function e(id) {
+  return document.getElementById(id);
+}
+
+var decryptionKeys = [
+  {
+    kid: "60061e01-7e47-7e87-7e57-d00d1ed00d1e",
+    jwk: '{ "keys": [{"kty":"oct", "kid":"YAYeAX5Hfod+V9ANHtANHg==", "k":  "GoogleTestKeyBase64ggg=="}]}'
+  },
+]
+
+// Taken from http://dash-mse-test.appspot.com/media.html
+// Note: Firefox doesn't handle the codecs parameter for AAC/mp4a correctly.
+var resources = [
+  { src: 'media/car_cenc-20120827-85.mp4', type: 'video/mp4; codecs="avc1.4d4015"' },
+  { src: 'media/car_cenc-20120827-86.mp4', type: 'video/mp4; codecs="avc1.4d401e"'},
+  { src: 'media/car_cenc-20120827-87.mp4', type: 'video/mp4; codecs="avc1.4d401e"'},
+  { src: 'media/car_cenc-20120827-88.mp4', type: 'video/mp4; codecs="avc1.4d401f"'},
+  { src: 'media/car_cenc-20120827-89.mp4', type: 'video/mp4; codecs="avc1.640028"'},
+  { src: 'media/car_cenc-20120827-8b.mp4', type: 'audio/mp4' /* ; codecs="mp4a.40.03" */},
+  { src: 'media/car_cenc-20120827-8c.mp4', type: 'audio/mp4' /* ; codecs="mp4a.40.02" */},
+  { src: 'media/car_cenc-20120827-8d.mp4', type: 'audio/mp4' /* ; codecs="mp4a.40.02" */},
+];
+
+var preload_cdm_checkbox = document.getElementById("preload_cdm_checkbox");
+
+function populateMediaDropBox() {
+
+  var list = e("list");
+  for (var i=0; i<resources.length; i++) {
+    var option = document.createElement("option");
+    var src = resources[i].src;
+    option.setAttribute("value", src);
+    option.appendChild(document.createTextNode('[' + (i + 1) +'] ' + src));
+    list.appendChild(option);
+  }
+
+  list.addEventListener("change",
+    function(event) {
+      load(list.selectedIndex);
+    }, false);
+}
+
+
+function log(msg) {
+  var log_pane = e('log_pane');
+  log_pane.appendChild(document.createTextNode(msg));
+  log_pane.appendChild(document.createElement("br"));
+}
+
+
+function createMediaKeys(media, mime) {
+  var supported = MediaKeys.isTypeSupported("org.w3.clearkey", mime);
+  log('MediaKeys.isTypeSupported("org.w3.clearkey", ' + mime + ')= ' + supported);
+  if (!supported) {
+    // Abort the load...
+    media.src = '';
+    return false;
+  }
+  if (!media.mediaKeys) {
+    var promise = MediaKeys.create("org.w3.clearkey");
+    promise.catch(function(ex) { log("ERROR: Unable to create MediaKeys ex=" + ex); });
+    promise.then(
+      function(createdMediaKeys) {
+        log("MediaKeys created, createdMediaKeys=" + createdMediaKeys);
+        return media.setMediaKeys(createdMediaKeys);
+      }
+    ).catch(function(ex) { log("ERROR: Unable to set MediaKeys ex=" + ex); });
+  }
+  return true;
+}
+
+function captureJson(dv, pos, length) {
+  const openBrace = "{".charCodeAt(0);
+  const closeBrace = "}".charCodeAt(0);
+  
+  if (dv.getUint8(pos) != openBrace) {
+    return -1;
+  }
+
+  var stacking = 0; // Number of unclosed "{" contexts encountered.
+  while (pos < length) {
+    var ch = dv.getUint8(pos);
+    if (ch == openBrace) {
+      stacking++;
+    } else if (ch == closeBrace) {
+      stacking--;
+    }
+    if (stacking == 0) {
+      return pos;
+    }
+    pos++;
+  }
+}
+
+function extractBMFFClearKeyID(initData) {
+  // cpearce: Firefox should be sending the entire PSSH box as initData,
+  //          but I'd guess we're sending the contents?
+
+  // Accessing the Uint8Array's underlying ArrayBuffer is impossible, so we
+  // copy it to a new one for parsing.
+  var abuf = new ArrayBuffer(initData.length);
+  var view = new Uint8Array(abuf);
+  view.set(initData);
+
+  var dv = new DataView(abuf);
+  var pos = 0;
+  const openBrace = "{".charCodeAt(0);
+  while (pos < abuf.byteLength) {
+    var ch = dv.getUint8(pos);
+    if (ch == openBrace) {
+      var jsonEnd = captureJson(dv, pos, abuf.byteLength);
+      if (jsonEnd != -1) {
+        return new Uint8Array(abuf.slice(pos, jsonEnd + 1));
+      }
+    }
+    pos++;
+  }
+  // Couldn't find it, give up hope.
+  return initData;
+}
+
+function load(index) {
+  e('list').selectedIndex = index;
+  e('log_pane').innerHTML = "";
+  var src = resources[index].src;
+  var mime = resources[index].type;
+  
+  log("Loading resource " + src);
+  var elemType = /^audio/.test(mime) ? "audio" : "video";
+  var media = document.createElement(elemType);
+  
+  if (preload_cdm_checkbox.checked) {
+    log("Loading CDM before starting resource load.");
+    if (!createMediaKeys(media, mime)) {
+      log("Failed to create MediaKeys");
+      return;
+    }
+  }
+
+  // Setup event listeners to log media load algorithm events.
+  var dumpEvent = function(event) {
+    log("EVENT " + event.type + " currentTime=" + event.target.currentTime +
+        " paused=" + event.target.paused + " ended=" + event.target.ended +
+        " readyState=" + event.target.readyState + "\n");
+  }
+  var events = ["loadedmetadata", "stalled"];
+  for (var i = 0; i < events.length; ++i) {
+    media.addEventListener(events[i], dumpEvent, false);
+  }
+    
+  function createSession(initDataType, initData) {
+    var promise = media.mediaKeys.createSession(initDataType, initData);
+    promise.catch(function(ex) { log("ERROR: Unable to create MediaKeySession ex=" + ex); });
+    promise.then(
+      function(keySession) {
+        log("Created keySession= " + keySession + " sessionId=" + keySession.sessionId);
+        var onKeyMessage = function(event) {
+          log("EVENT keymessage received");
+
+          var clearKeyInitDataStr = Uint8ArrayToStr(extractBMFFClearKeyID(event.message));
+          log("keymessage clear key data=" + clearKeyInitDataStr);
+          var initData = JSON.parse(clearKeyInitDataStr);
+          if (!initData) {
+            log("ClearKey initData JSON parsing failed.");
+            return;
+          }
+          if (initData.keys) {
+            for (var i=0; i<initData.keys.length; i++) {
+              var kid = initData.keys[i].kid;
+              if (kid) {
+                log("CDM requested key " + kid);
+                for (var j = 0; j<decryptionKeys.length; j++) {
+                  if (decryptionKeys[j].kid == kid) {
+                    log("Sending CDM key " + kid);
+                    keySession.update(stringToBytes(decryptionKeys[j].jwk));
+                    break;
+                  }
+                }
+              }
+              //log("Need key: kid=" + i + initData.keys[0].kid + " length=" + initData.keys[0].length);
+              // initData.keys[0].kid
+            }
+          }
+
+        };
+        keySession.addEventListener("message", onKeyMessage, false);
+
+      }
+    ).catch(function(ex) { log("ERROR: Unable to set MediaKeys ex=" + ex); });  
+  }
+    
+  media.addEventListener("needkey", function(event) {
+    log("EVENT needkey initDataType=" + event.initDataType + " initData= " + Uint8ArrayToStr(event.initData));
+    var supported = MediaKeys.isTypeSupported("org.w3.clearkey", mime);
+    log('MediaKeys.isTypeSupported("org.w3.clearkey", ' + mime + ')= ' + supported);
+    if (!supported) {
+      // Abort the load...
+      media.src = '';
+      return;
+    }
+    if (!media.mediaKeys) {
+      var createPromise = MediaKeys.create("org.w3.clearkey");
+      createPromise.catch(function(ex) { log("ERROR: Unable to create MediaKeys ex=" + ex); });
+      var setPromise = createPromise.then(
+        function(createdMediaKeys) {
+          log("MediaKeys created, createdMediaKeys=" + createdMediaKeys);
+          return media.setMediaKeys(createdMediaKeys);
+        }
+      );
+      setPromise.catch(function(ex) { log("ERROR: Unable to set MediaKeys ex=" + ex); });
+      var createSessionPromise = setPromise.then(
+        function() {
+          createSession(event.initDataType, event.initData);
+        }
+      );
+      createSessionPromise.catch(function(ex) { log("ERROR: Unable to create session ex=" + ex); });
+    } else {
+      createSession(event.initDataType, event.initData);
+    }
+  }, false);
+
+  
+  media.src = src;
+  media.controls = true;
+  media.autoplay = true;
+  
+  // Destory existing media elements. This frees up decoder resources.
+  var container = document.getElementById('player_container');
+  var children = container.childNodes;
+  while (children.length > 0) {
+    // Clever hack to halt the media load without causing an error event.
+    container.firstChild.src = '';
+    container.removeChild(container.firstChild);
+  }
+  container.appendChild(media);
+}
+
+
+function Uint8ArrayToStr(uintArr) {
+  var str = "";
+  for (var i=0; i<uintArr.length; i++) {
+    str += String.fromCharCode(uintArr[i])
+  }
+  return str;
+}
+
+function stringToBytes(str) {
+  var length = str.length;
+  var bytes = new Uint8Array(length);
+  for (var n = 0; n < length; ++n)
+    bytes[n] = str.charCodeAt(n) & 0xFF;
+  return bytes;
+}
+
+function onPageLoad() {
+  populateMediaDropBox();
+  document.onkeypress = function(e) {
+    e = e || window.event;
+    var charCode = (typeof e.which == "number") ? e.which : e.keyCode;
+    var number = charCode - 48;
+    if (number >=1 && number <= resources.length) {
+      load(number - 1);
+    }
+  };
+  load(0);
+}
+
+</script>
+
+</body>
+</html>
