@@ -190,6 +190,7 @@ function load(index) {
     promise.then(
       function(keySession) {
         log("Created keySession= " + keySession + " sessionId=" + keySession.sessionId);
+
         var onKeyMessage = function(event) {
           log("EVENT keymessage received");
 
@@ -221,6 +222,12 @@ function load(index) {
         };
         keySession.addEventListener("message", onKeyMessage, false);
 
+        keySession.addEventListener("error",
+          function(err) {
+            log("EVENT error session=" + keySession.sessionId +
+                " systemCode=" + err.systemCode + " err=" + err);
+          }, false);
+
       }
     ).catch(function(ex) { log("ERROR: Unable to set MediaKeys ex=" + ex); });
   }
@@ -246,6 +253,8 @@ function load(index) {
       setPromise.catch(function(ex) { log("ERROR: Unable to set MediaKeys ex=" + ex); });
       var createSessionPromise = setPromise.then(
         function() {
+          log("creating session");
+          media.mediaKeys.loadSession("some fake session id");
           createSession(event.initDataType, event.initData);
         }
       );
