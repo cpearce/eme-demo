@@ -74,6 +74,87 @@ function log(msg) {
 }
 
 
+function haveIndexedDB() {
+  return "indexedDB" in window;
+}
+
+var database;
+
+document.addEventListener("DOMContentLoaded", function() {
+  if (!haveIndexedDB()) {
+    alert("No IndexedDB");
+    return;
+  }
+
+  var openRequest = indexedDB.open("session_ids",1);
+
+  openRequest.onupgradeneeded = function(e) {
+    log("IndexedDB: Upgraded.");
+    var thisDB = e.target.result;
+    if (!thisDB.objectStoreNames.contains("sessions")) {
+      thisDB.createObjectStore("sessions", { autoIncrement : true }); //{ keyPath: "sessionId" });
+    }
+  }
+
+  openRequest.onsuccess = function(e) {
+    log("IndexedDB: Opened");
+    database = e.target.result;
+    retrieveSessionIds();
+  }
+
+  openRequest.onerror = function(e) {
+    alert("Failed to open IndexedDB");
+  }
+
+},false);
+
+
+function storeSessionId(sessionId) {
+  log("storeSessionId(" + sessionId + ")");
+  if (!database) {
+    alert("Database not open");
+    return;
+  }
+  var txn = database.transaction(["sessions"], "readwrite");
+  var store = txn.objectStore("sessions");
+  var sid = {
+    sessionId:sessionId
+  };
+  var request = store.add(sid);
+  request.onerror = function(e) {
+    alert("IndexedDB add error");
+  };
+  request.onsuccess = function(e) {
+    log("IndexedDB: stored " + sessionId);
+  };
+}
+
+function removeSessionId(sessionId) {
+  log("IndexedDB: removing data stored for session " + sessionId);
+  var txn = database.transaction(["sessions"], "readwrite").objectStore("sessions").delete(sessionId);
+}
+
+function retrieveSessionIds() {
+  var txn = database.transaction(["sessions"], "readonly");
+  var objectStore = txn.objectStore("sessions");
+   
+  var cursor = objectStore.openCursor();
+  
+  cursor.onsuccess = function(e) {
+      var res = e.target.result;
+      if (res) {
+          var s = "{";
+          for (var field in res.value) {
+            s += " " + field + "=" + res.value[field];
+          }
+          s += " }";
+          log("IndexedDB: retrieved session: " + s);
+          removeSessionId(res.key);
+          res.continue();
+      }
+  }
+}
+
 function createMediaKeys(media, mime) {
   var supported = MediaKeys.isTypeSupported("org.w3.clearkey", mime);
   log('MediaKeys.isTypeSupported("org.w3.clearkey", ' + mime + ')= ' + supported);
@@ -147,6 +228,16 @@ function extractBMFFClearKeyID(initData) {
 
 var globalMedia;
 
+var sessionIds = [];
+
+// tODO: make sure storeSessionId is working! and then check that the beforeunload is firing!
+
+window.onbeforeunload = function(e) {
+  for (var sid in sessionIds) {
+    storeSessionId(sessionIds[sid]);
+  }
+};
+
 function load(index) {
 
   if (globalMedia) {
@@ -191,6 +282,12 @@ function load(index) {
       function(keySession) {
         log("Created keySession= " + keySession + " sessionId=" + keySession.sessionId);
 
+        sessionIds.push(keySession.sessionId);
+        var sids = "";
+        for (var sid in sessionIds) {
+          sids += " " + sessionIds[sid];
+        }
+        log("Session Ids:" + sids);
         var onKeyMessage = function(event) {
           log("EVENT keymessage received");
 
