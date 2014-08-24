@@ -306,6 +306,10 @@ function onPageLoad() {
     if (number >=1 && number <= resources.length) {
       load(number - 1);
     }
+    // 'c' clears the media's src, unloads decoder and CDM.
+    if (charCode == 99) {
+      globalMedia.src = '';
+    }
   };
   load(0);
 }
