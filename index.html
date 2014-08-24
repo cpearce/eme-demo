@@ -232,8 +232,8 @@ function load(index) {
     ).catch(function(ex) { log("ERROR: Unable to set MediaKeys ex=" + ex); });
   }
 
-  media.addEventListener("needkey", function(event) {
-    log("EVENT needkey initDataType=" + event.initDataType + " initData= " + Uint8ArrayToStr(event.initData));
+  media.addEventListener("encrypted", function(event) {
+    log("EVENT encrypted initDataType=" + event.initDataType + " initData= " + Uint8ArrayToStr(event.initData));
     var supported = MediaKeys.isTypeSupported("org.w3.clearkey", mime);
     log('MediaKeys.isTypeSupported("org.w3.clearkey", ' + mime + ')= ' + supported);
     if (!supported) {
