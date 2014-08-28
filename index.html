@@ -30,7 +30,8 @@ function e(id) {
 var decryptionKeys = [
   {
     kid: "60061e01-7e47-7e87-7e57-d00d1ed00d1e",
-    jwk: '{ "keys": [{"kty":"oct", "kid":"YAYeAX5Hfod+V9ANHtANHg==", "k":  "GoogleTestKeyBase64ggg=="}]}'
+    jwk: '{ "keys": [{"kty":"oct", "kid":"YAYeAX5Hfod+V9ANHtANHg==", "k":  "GoogleTestKeyBase64ggg=="}]}',
+    sent: false,
   },
 ]
 
@@ -124,9 +125,8 @@ function extractBMFFClearKeyID(initData) {
 
   // Accessing the Uint8Array's underlying ArrayBuffer is impossible, so we
   // copy it to a new one for parsing.
-  var abuf = new ArrayBuffer(initData.length);
+  var abuf = initData;
   var view = new Uint8Array(abuf);
-  view.set(initData);
 
   var dv = new DataView(abuf);
   var pos = 0;
@@ -184,12 +184,16 @@ function load(index) {
     media.addEventListener(events[i], dumpEvent, false);
   }
 
+  var sessions = [];
+
   function createSession(initDataType, initData) {
     var promise = media.mediaKeys.createSession(initDataType, initData);
     promise.catch(function(ex) { log("ERROR: Unable to create MediaKeySession ex=" + ex); });
     promise.then(
       function(keySession) {
         log("Created keySession= " + keySession + " sessionId=" + keySession.sessionId);
+
+        sessions.push(keySession);
 
         var onKeyMessage = function(event) {
           log("EVENT keymessage received");
@@ -210,6 +214,7 @@ function load(index) {
                   if (decryptionKeys[j].kid == kid) {
                     log("Sending CDM key " + kid);
                     keySession.update(stringToBytes(decryptionKeys[j].jwk));
+                    decryptionKeys[j].sent = true;
                     break;
                   }
                 }
@@ -233,7 +238,7 @@ function load(index) {
   }
 
   media.addEventListener("encrypted", function(event) {
-    log("EVENT encrypted initDataType=" + event.initDataType + " initData= " + Uint8ArrayToStr(event.initData));
+    log("EVENT encrypted initDataType=" + event.initDataType + " initData= " + ArrayBufferToStr(event.initData));
     var supported = MediaKeys.isTypeSupported("org.w3.clearkey", mime);
     log('MediaKeys.isTypeSupported("org.w3.clearkey", ' + mime + ')= ' + supported);
     if (!supported) {
@@ -264,6 +269,29 @@ function load(index) {
     }
   }, false);
 
+  media.addEventListener("canplay", function(event) {
+    log("EVENT canplay, polling usableKeys");
+    for (var i = 0; i < sessions.length; i++) {
+      var session = sessions[i];
+      session.getUsableKeyIds().then(function(keyids) {
+        log("usableKeys for session: " + session.sessionId);
+        for (var k = 0; k < keyids.length; k++) {
+          var kid = window.btoa(ArrayBufferToStr(keyids[k]));
+          var found = false;
+          for (var j = 0; !found && j<decryptionKeys.length; j++) {
+            var json = JSON.parse(decryptionKeys[j].jwk);
+            for (var z=0; z<json.keys.length; z++) {
+              if (json.keys[z].kid == kid) {
+                found = true;
+                break;
+               }
+            }
+          }
+          log("Usable key: " + kid + " expected=" + found);
+         }
+      });
+    }
+  }, false);
 
   media.src = src;
   media.controls = true;
@@ -289,12 +317,16 @@ function Uint8ArrayToStr(uintArr) {
   return str;
 }
 
+function ArrayBufferToStr(buffer) {
+  return Uint8ArrayToStr(new Uint8Array(buffer));
+}
+
 function stringToBytes(str) {
   var length = str.length;
   var bytes = new Uint8Array(length);
   for (var n = 0; n < length; ++n)
     bytes[n] = str.charCodeAt(n) & 0xFF;
-  return bytes;
+  return bytes.buffer;
 }
 
 function onPageLoad() {
