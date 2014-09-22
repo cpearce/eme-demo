@@ -196,7 +196,7 @@ function load(index) {
         sessions.push(keySession);
 
         var onKeyMessage = function(event) {
-          log("EVENT keymessage received");
+          log("EVENT keymessage received: " + ArrayBufferToStr(event.message));
 
           var clearKeyInitDataStr = Uint8ArrayToStr(extractBMFFClearKeyID(event.message));
           log("keymessage clear key data=" + clearKeyInitDataStr);
