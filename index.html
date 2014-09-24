@@ -120,9 +120,6 @@ function captureJson(dv, pos, length) {
 }
 
 function extractBMFFClearKeyID(initData) {
-  // cpearce: Firefox should be sending the entire PSSH box as initData,
-  //          but I'd guess we're sending the contents?
-
   // Accessing the Uint8Array's underlying ArrayBuffer is impossible, so we
   // copy it to a new one for parsing.
   var abuf = initData;
@@ -187,9 +184,8 @@ function load(index) {
   var sessions = [];
 
   function createSession(initDataType, initData) {
-    var promise = media.mediaKeys.createSession(initDataType, initData);
-    promise.catch(function(ex) { log("ERROR: Unable to create MediaKeySession ex=" + ex); });
-    promise.then(
+    var session = media.mediaKeys.createSession();
+    session.generateRequest(initDataType, initData).then(
       function(keySession) {
         log("Created keySession= " + keySession + " sessionId=" + keySession.sessionId);
 
@@ -205,25 +201,21 @@ function load(index) {
             log("ClearKey initData JSON parsing failed.");
             return;
           }
-          if (initData.keys) {
-            for (var i=0; i<initData.keys.length; i++) {
-              var kid = initData.keys[i].kid;
-              if (kid) {
-                log("CDM requested key " + kid);
-                for (var j = 0; j<decryptionKeys.length; j++) {
-                  if (decryptionKeys[j].kid == kid) {
-                    log("Sending CDM key " + kid);
-                    keySession.update(stringToBytes(decryptionKeys[j].jwk));
-                    decryptionKeys[j].sent = true;
-                    break;
-                  }
-                }
+          if (!initData.keys) {
+            return;
+          }
+          for (var i=0; i<initData.keys.length; i++) {
+            var kid = initData.keys[i].kid;
+            log("CDM requested key " + kid);
+            for (var j = 0; j<decryptionKeys.length; j++) {
+              if (decryptionKeys[j].kid == kid) {
+                log("Sending CDM key " + kid);
+                keySession.update(stringToBytes(decryptionKeys[j].jwk));
+                decryptionKeys[j].sent = true;
+                break;
               }
-              //log("Need key: kid=" + i + initData.keys[0].kid + " length=" + initData.keys[0].length);
-              // initData.keys[0].kid
             }
           }
-
         };
         keySession.addEventListener("message", onKeyMessage, false);
 
@@ -233,37 +225,39 @@ function load(index) {
                 " systemCode=" + err.systemCode + " err=" + err);
           }, false);
 
-      }
-    ).catch(function(ex) { log("ERROR: Unable to set MediaKeys ex=" + ex); });
+      }, bail("generateRequest failed"));
   }
 
+  function bail(message) {
+    return function(err) {
+      log(message + (err ? err : ""));
+    }
+  }
+  
   media.addEventListener("encrypted", function(event) {
     log("EVENT encrypted initDataType=" + event.initDataType + " initData= " + ArrayBufferToStr(event.initData));
-    var supported = MediaKeys.isTypeSupported("org.w3.clearkey", mime);
-    log('MediaKeys.isTypeSupported("org.w3.clearkey", ' + mime + ')= ' + supported);
+    
+    var supported = MediaKeys.isTypeSupported("org.w3.clearkey", event.initDataType, mime);
+    log('MediaKeys.isTypeSupported("org.w3.clearkey", ' + event.initDataType + ', ' + mime + ')= ' + supported);
     if (!supported) {
       // Abort the load...
       media.src = '';
       return;
     }
+
     if (!media.mediaKeys) {
-      var createPromise = MediaKeys.create("org.w3.clearkey");
-      createPromise.catch(function(ex) { log("ERROR: Unable to create MediaKeys ex=" + ex); });
-      var setPromise = createPromise.then(
-        function(createdMediaKeys) {
-          log("MediaKeys created, createdMediaKeys=" + createdMediaKeys);
-          return media.setMediaKeys(createdMediaKeys);
-        }
-      );
-      setPromise.catch(function(ex) { log("ERROR: Unable to set MediaKeys ex=" + ex); });
-      var createSessionPromise = setPromise.then(
-        function() {
-          log("creating session");
-          media.mediaKeys.loadSession("some fake session id");
-          createSession(event.initDataType, event.initData);
-        }
-      );
-      createSessionPromise.catch(function(ex) { log("ERROR: Unable to create session ex=" + ex); });
+      var onMediaKeysSet = function() {
+        log("MediaKeys set");
+        createSession(event.initDataType, event.initData);
+      };
+    
+      var onMediaKeysCreated = function(mediaKeys) {
+        log("MediaKeys created");
+        media.setMediaKeys(mediaKeys).then(onMediaKeysSet, bail("setMediaKeys() failed."));
+      };
+    
+      MediaKeys.create("org.w3.clearkey").then(onMediaKeysCreated, bail("MediaKeys.create() failed."));
+
     } else {
       createSession(event.initDataType, event.initData);
     }
