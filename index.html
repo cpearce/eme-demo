@@ -18,6 +18,7 @@
 </p>
 <div id="player_container"></div>
 <br>
+<button onclick="removeSessions();">Remove all sessions</button>
 <div id="log_pane">
 </div>
 
@@ -144,6 +145,8 @@ function extractBMFFClearKeyID(initData) {
 
 var globalMedia;
 
+var removeSessions;
+
 function load(index) {
 
   if (globalMedia) {
@@ -183,8 +186,21 @@ function load(index) {
 
   var sessions = [];
 
+  removeSessions = function() {
+    for (var i = 0; i < sessions.length; i++) {
+      var session = sessions[i];
+      session.remove().then(
+        function() {
+          log("Removed session " + session.sessionId);
+        },
+        function() {
+          log("Failed to remove session " + session.sessionId);
+        });
+    }
+  }
+
   function createSession(initDataType, initData) {
-    var session = media.mediaKeys.createSession();
+    var session = media.mediaKeys.createSession("persistent");
     session.generateRequest(initDataType, initData).then(
       function(keySession) {
         log("Created keySession= " + keySession + " sessionId=" + keySession.sessionId);
@@ -233,10 +249,10 @@ function load(index) {
       log(message + (err ? err : ""));
     }
   }
-  
+
   media.addEventListener("encrypted", function(event) {
     log("EVENT encrypted initDataType=" + event.initDataType + " initData= " + ArrayBufferToStr(event.initData));
-    
+
     var supported = MediaKeys.isTypeSupported("org.w3.clearkey", event.initDataType, mime);
     log('MediaKeys.isTypeSupported("org.w3.clearkey", ' + event.initDataType + ', ' + mime + ')= ' + supported);
     if (!supported) {
@@ -250,12 +266,12 @@ function load(index) {
         log("MediaKeys set");
         createSession(event.initDataType, event.initData);
       };
-    
+
       var onMediaKeysCreated = function(mediaKeys) {
         log("MediaKeys created");
         media.setMediaKeys(mediaKeys).then(onMediaKeysSet, bail("setMediaKeys() failed."));
       };
-    
+
       MediaKeys.create("org.w3.clearkey").then(onMediaKeysCreated, bail("MediaKeys.create() failed."));
 
     } else {
