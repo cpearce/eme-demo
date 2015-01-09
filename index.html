@@ -206,9 +206,9 @@ function load(index) {
   var sessions = [];
 
   function createSession(initDataType, initData) {
-    var session = media.mediaKeys.createSession();
-    session.generateRequest(initDataType, initData).then(
-      function(keySession) {
+    var keySession = media.mediaKeys.createSession();
+    keySession.generateRequest(initDataType, initData).then(
+      function() {
         log("Created keySession= " + keySession + " sessionId=" + keySession.sessionId);
 
         sessions.push(keySession);
